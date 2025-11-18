@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# --- Configuration ---
+PYTHON_MODULE="python/3.12.1"
+VENV_DIR="$HOME/envs/camo"
+REQUIREMENTS_FILE="$PWD/requirements.txt"
+
+# --- Load Python module ---
+echo "Loading Python module $PYTHON_MODULE ..."
+module load $PYTHON_MODULE
+
+# --- Create virtual environment if it doesn't exist ---
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment at $VENV_DIR ..."
+    mkdir -p $(dirname "$VENV_DIR")
+    python -m venv "$VENV_DIR"
+else
+    echo "Virtual environment already exists at $VENV_DIR"
+fi
+
+# --- Activate the virtual environment ---
+echo "Activating virtual environment ..."
+source "$VENV_DIR/bin/activate"
+
+# --- Upgrade pip ---
+echo "Upgrading pip ..."
+pip install --upgrade pip
+
+# --- Install requirements ---
+if [ -f "$REQUIREMENTS_FILE" ]; then
+    echo "Installing packages from $REQUIREMENTS_FILE ..."
+    pip install -r "$REQUIREMENTS_FILE"
+else
+    echo "No requirements.txt found at $REQUIREMENTS_FILE"
+fi
+
+echo "Environment setup complete!"

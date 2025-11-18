@@ -1,0 +1,16 @@
+Testing Numpy
+[[0.82167086 0.21505717 0.68289529]
+ [0.51943668 0.45923169 0.03025563]
+ [0.28006498 0.89266405 0.74126485]]
+
+ Testing Pytorch
+tensor([[ 0.4432, -0.6777, -0.2438],
+        [-0.1941,  0.3454, -0.8123],
+        [-0.8002, -1.6618, -1.7412]])
+
+ Checking if CUDA is available
+GPU name:  Tesla V100-PCIE-16GB
+Tensor moved to GPU:  cuda:0
+
+ Testing Matplotlib
+All tests passed
