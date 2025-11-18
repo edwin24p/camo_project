@@ -15,4 +15,4 @@
 #SBATCH --output=test.log
 module load python/3.12.1
 source ~/envs/camo/bin/activate
-python test.py
+python model.py
