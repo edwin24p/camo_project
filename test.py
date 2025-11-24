@@ -1,8 +1,3 @@
-"""
-GPU-Accelerated Animal Detection using YOLOv8
-This uses a pre-trained deep learning model that runs on your GPU for fast, accurate detection
-"""
-
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,9 +5,10 @@ import urllib.request
 from pathlib import Path
 
 # <-- Choose your input method -->
-image_url = "https://static.boredpanda.com/blog/wp-content/uploads/2015/07/da-vinci-horse-pattern-north-yorkshire-coverimage.jpg"
+image_url = "https://www.osc.org/wp-content/uploads/2019/06/Add-a-heading-55.png"
+
 # Option 2: Use a local file path (uncomment to use)
-# image_path = "path/to/your/image.jpg"
+# image_path = "/home/maudie/eecs442_final/imgs/giraffe-circled.jpg"
 
 # Configuration
 USE_URL = True  # Set to False to use local file path
@@ -22,8 +18,8 @@ USE_GPU = True  # Set to False to use CPU instead
 CONFIDENCE_THRESHOLD = 0.25  # Minimum confidence to show detection (0.0-1.0)
 IOU_THRESHOLD = 0.45  # Overlap threshold for removing duplicate detections
 
-# Model selection: 'yolov8n' (fastest), 'yolov8s', 'yolov8m', 'yolov8l', 'yolov8x' (most accurate)
-MODEL_SIZE = 'yolov8x'  # Use 'x' for best accuracy, 'n' for speed
+# IMPORTANT: Use segmentation model with '-seg' suffix!
+MODEL_SIZE = 'yolov8x-seg'  # Options: yolov8n-seg, yolov8s-seg, yolov8m-seg, yolov8l-seg, yolov8x-seg
 
 def check_gpu_availability():
     """Check if GPU is available for PyTorch"""
@@ -68,13 +64,13 @@ def url_to_image(url):
         print(f"Error loading image: {e}")
         return None
 
-def load_yolo_model(model_size='yolov8n', use_gpu=True):
-    """Load YOLOv8 model"""
+def load_yolo_model(model_size='yolov8n-seg', use_gpu=True):
+    """Load YOLOv8 segmentation model"""
     try:
         from ultralytics import YOLO
         
-        print(f"\n📦 Loading YOLOv8 model ({model_size})...")
-        print("   (First run will download the model - ~6MB to 138MB depending on size)")
+        print(f"\n📦 Loading YOLOv8-Segmentation model ({model_size})...")
+        print("   (First run will download the model - ~7MB to 140MB depending on size)")
         
         # Load model
         model = YOLO(f'{model_size}.pt')
@@ -87,7 +83,7 @@ def load_yolo_model(model_size='yolov8n', use_gpu=True):
             print("   Using CPU as requested")
         
         model.to(device)
-        print(f"✓ Model loaded on {device.upper()}")
+        print(f"✓ Segmentation model loaded on {device.upper()}")
         
         return model, device
         
@@ -103,10 +99,10 @@ def load_yolo_model(model_size='yolov8n', use_gpu=True):
         return None, None
 
 def detect_animals(image, model, confidence_threshold=0.25, iou_threshold=0.45):
-    """Detect animals in image using YOLO"""
+    """Detect animals in image using YOLO with segmentation masks"""
     
-    # Run inference
-    print("\n🔍 Running detection...")
+    # Run inference with segmentation
+    print("\n🔍 Running detection with segmentation...")
     results = model(image, conf=confidence_threshold, iou=iou_threshold, verbose=False)
     
     # Get the first result (single image)
@@ -117,18 +113,16 @@ def detect_animals(image, model, confidence_threshold=0.25, iou_threshold=0.45):
     confidences = result.boxes.conf.cpu().numpy()  # Confidence scores
     class_ids = result.boxes.cls.cpu().numpy().astype(int)  # Class IDs
     
+    # Get segmentation masks
+    masks = None
+    if hasattr(result, 'masks') and result.masks is not None:
+        masks = result.masks.data.cpu().numpy()
+        print(f"   ✓ Segmentation masks detected for {len(masks)} objects")
+    else:
+        print("   ⚠ No segmentation masks available - model may not be a segmentation model")
+    
     # Get class names
     class_names = result.names
-    
-    # Filter for animals only (COCO dataset animal classes)
-    animal_classes = {
-        0: 'person', 14: 'bird', 15: 'cat', 16: 'dog', 17: 'horse', 
-        18: 'sheep', 19: 'cow', 20: 'elephant', 21: 'bear', 22: 'zebra', 
-        23: 'giraffe', 24: 'backpack'
-    }
-    
-    # Actually, let's keep all living things for broader detection
-    # COCO has limited animal classes, so we'll show all detections
     
     detections = []
     for i in range(len(boxes)):
@@ -137,32 +131,43 @@ def detect_animals(image, model, confidence_threshold=0.25, iou_threshold=0.45):
         confidence = confidences[i]
         box = boxes[i]
         
+        # Get mask if available
+        mask = masks[i] if masks is not None else None
+        
         detections.append({
             'class_id': class_id,
             'class_name': class_name,
             'confidence': confidence,
-            'box': box
+            'box': box,
+            'mask': mask
         })
     
     return detections, result
 
 def create_segmentation_mask(image, detections):
-    """Create a segmentation mask from detections"""
+    """Create a segmentation mask from detections using actual mask contours"""
     mask = np.zeros(image.shape[:2], dtype=np.uint8)
     
     for det in detections:
-        x1, y1, x2, y2 = det['box'].astype(int)
-        # Fill the bounding box area
-        mask[y1:y2, x1:x2] = 255
+        if det['mask'] is not None:
+            # Resize mask to image dimensions
+            det_mask = cv2.resize(det['mask'], (image.shape[1], image.shape[0]))
+            # Convert to binary and add to overall mask
+            binary_mask = (det_mask > 0.5).astype(np.uint8) * 255
+            mask = cv2.bitwise_or(mask, binary_mask)
+        else:
+            # Fallback to bounding box if no mask available
+            x1, y1, x2, y2 = det['box'].astype(int)
+            mask[y1:y2, x1:x2] = 255
     
     # Clean up mask with morphological operations
-    kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
     
     return mask
 
 def draw_detections(image, detections):
-    """Draw bounding boxes and labels on image"""
+    """Draw segmentation contours and labels on image - NO BOXES!"""
     annotated = image.copy()
     
     # Generate colors for different classes
@@ -172,50 +177,70 @@ def draw_detections(image, detections):
     for det in detections:
         class_name = det['class_name']
         confidence = det['confidence']
-        x1, y1, x2, y2 = det['box'].astype(int)
         
         # Get or create color for this class
         if class_name not in colors:
-            colors[class_name] = tuple(np.random.randint(0, 255, 3).tolist())
+            colors[class_name] = tuple(np.random.randint(50, 255, 3).tolist())
         color = colors[class_name]
         
-        # Draw bounding box
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
+        # Draw segmentation contour if available
+        if det['mask'] is not None:
+            # Resize mask to image dimensions
+            det_mask = cv2.resize(det['mask'], (image.shape[1], image.shape[0]))
+            binary_mask = (det_mask > 0.5).astype(np.uint8)
+            
+            # Find contours of the mask
+            contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Draw thick contour following the animal's edges
+            cv2.drawContours(annotated, contours, -1, color, 4)
+            
+            # Optional: fill with semi-transparent color
+            overlay = annotated.copy()
+            cv2.drawContours(overlay, contours, -1, color, -1)
+            annotated = cv2.addWeighted(annotated, 0.8, overlay, 0.2, 0)
+            
+        else:
+            # Fallback to bounding box if no mask (shouldn't happen with -seg model)
+            print(f"   ⚠ Warning: No mask for {class_name}, using box")
+            x1, y1, x2, y2 = det['box'].astype(int)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
         
         # Create label
         label = f"{class_name}: {confidence:.2f}"
+        x1, y1 = det['box'][:2].astype(int)
         
         # Get text size for background
         (text_width, text_height), baseline = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
         
         # Draw background rectangle for text
-        cv2.rectangle(annotated, (x1, y1 - text_height - 10), 
-                     (x1 + text_width, y1), color, -1)
+        cv2.rectangle(annotated, (x1, y1 - text_height - 15), 
+                     (x1 + text_width + 10, y1), color, -1)
         
         # Draw text
-        cv2.putText(annotated, label, (x1, y1 - 5),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(annotated, label, (x1 + 5, y1 - 8),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     
     return annotated
 
 def create_outlined_version(image, mask):
-    """Create version with green outline"""
+    """Create version with green outline following edges"""
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     outlined = image.copy()
-    cv2.drawContours(outlined, contours, -1, (0, 255, 0), 3)
+    cv2.drawContours(outlined, contours, -1, (0, 255, 0), 4)
     return outlined
 
 def create_visualizations(image, detections):
     """Create all visualization outputs"""
     
-    # Annotated image with bounding boxes
+    # Annotated image with segmentation contours
     annotated = draw_detections(image, detections)
     
     # Segmentation mask
     mask = create_segmentation_mask(image, detections)
     
-    # Outlined version
+    # Outlined version (green contours only)
     outlined = create_outlined_version(image, mask)
     
     # Overlay
@@ -225,15 +250,11 @@ def create_visualizations(image, detections):
     # Segmented (black background)
     segmented = cv2.bitwise_and(image, image, mask=mask)
     
-    # White background
-    white_bg = np.ones_like(image) * 255
-    white_bg[mask > 0] = image[mask > 0]
-    
-    return annotated, mask, outlined, overlay, segmented, white_bg
+    return annotated, outlined, overlay, segmented
 
 def main():
     print("="*70)
-    print("🤖 GPU-Accelerated Animal Detection using YOLOv8")
+    print("🤖 GPU-Accelerated Animal Detection with Edge Segmentation")
     print("="*70)
     
     # Check GPU
@@ -279,12 +300,12 @@ def main():
     # Print detections
     print("\n📋 Detected objects:")
     for i, det in enumerate(detections, 1):
-        print(f"   {i}. {det['class_name']}: {det['confidence']:.1%} confidence")
+        mask_status = "with segmentation" if det['mask'] is not None else "box only"
+        print(f"   {i}. {det['class_name']}: {det['confidence']:.1%} confidence ({mask_status})")
     
     # Create visualizations
     print("\n4. Creating visualizations...")
-    annotated, mask, outlined, overlay, segmented, white_bg = create_visualizations(
-        image, detections)
+    annotated, outlined, overlay, segmented = create_visualizations(image, detections)
     
     # Save outputs
     print("\n5. Saving outputs...")
@@ -293,88 +314,82 @@ def main():
     print("   ✓ 1_original.png")
     
     cv2.imwrite("2_detected.png", annotated)
-    print("   ✓ 2_detected.png (bounding boxes)")
+    print("   ✓ 2_detected.png (segmentation contours following edges)")
     
-    cv2.imwrite("3_mask.png", mask)
-    print("   ✓ 3_mask.png (segmentation mask)")
+    cv2.imwrite("3_outlined.png", outlined)
+    print("   ✓ 3_outlined.png (green outline)")
     
-    cv2.imwrite("4_outlined.png", outlined)
-    print("   ✓ 4_outlined.png (green outline)")
+    cv2.imwrite("4_overlay.png", overlay)
+    print("   ✓ 4_overlay.png (semi-transparent)")
     
-    cv2.imwrite("5_overlay.png", overlay)
-    print("   ✓ 5_overlay.png (semi-transparent)")
-    
-    cv2.imwrite("6_segmented.png", segmented)
-    print("   ✓ 6_segmented.png (black background)")
-    
-    cv2.imwrite("7_white_bg.png", white_bg)
-    print("   ✓ 7_white_bg.png (white background)")
+    cv2.imwrite("5_segmented.png", segmented)
+    print("   ✓ 5_segmented.png (black background)")
     
     # Create comprehensive visualization
-    plt.figure(figsize=(20, 12))
+    plt.figure(figsize=(20, 10))
     
-    plt.subplot(2, 4, 1)
+    plt.subplot(2, 3, 1)
     plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-    plt.title("1. Original Image", fontsize=14, fontweight='bold')
+    plt.title("1. Original Image", fontsize=16, fontweight='bold')
     plt.axis('off')
     
-    plt.subplot(2, 4, 2)
+    plt.subplot(2, 3, 2)
     plt.imshow(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
-    plt.title("2. AI Detection", fontsize=14, fontweight='bold')
+    plt.title("2. AI Segmentation (Edge-Following)", fontsize=16, fontweight='bold')
     plt.axis('off')
     
-    plt.subplot(2, 4, 3)
-    plt.imshow(mask, cmap='gray')
-    plt.title("3. Segmentation Mask", fontsize=14, fontweight='bold')
-    plt.axis('off')
-    
-    plt.subplot(2, 4, 4)
+    plt.subplot(2, 3, 3)
     plt.imshow(cv2.cvtColor(outlined, cv2.COLOR_BGR2RGB))
-    plt.title("4. Outlined", fontsize=14, fontweight='bold')
+    plt.title("3. Outlined", fontsize=16, fontweight='bold')
     plt.axis('off')
     
-    plt.subplot(2, 4, 5)
+    plt.subplot(2, 3, 4)
     plt.imshow(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB))
-    plt.title("5. Overlay", fontsize=14, fontweight='bold')
+    plt.title("4. Overlay", fontsize=16, fontweight='bold')
     plt.axis('off')
     
-    plt.subplot(2, 4, 6)
+    plt.subplot(2, 3, 5)
     plt.imshow(cv2.cvtColor(segmented, cv2.COLOR_BGR2RGB))
-    plt.title("6. Segmented (Black)", fontsize=14, fontweight='bold')
+    plt.title("5. Segmented", fontsize=16, fontweight='bold')
     plt.axis('off')
     
-    plt.subplot(2, 4, 7)
-    plt.imshow(cv2.cvtColor(white_bg, cv2.COLOR_BGR2RGB))
-    plt.title("7. Segmented (White)", fontsize=14, fontweight='bold')
+    # Statistics - LARGER TEXT
+    plt.subplot(2, 3, 6)
     plt.axis('off')
     
-    # Statistics
-    plt.subplot(2, 4, 8)
-    plt.axis('off')
+    model_name = MODEL_SIZE.replace('-seg', '').upper()
     
-    stats_text = "Detection Statistics\n"
-    stats_text += "=" * 35 + "\n\n"
-    stats_text += f"Model: YOLOv8-{MODEL_SIZE[-1].upper()}\n"
+    stats_text = "DETECTION STATISTICS\n"
+    stats_text += "=" * 40 + "\n\n"
+    stats_text += f"Model: YOLOv8-{model_name[-1]}-SEG\n"
     stats_text += f"Device: {device.upper()}\n\n"
-    stats_text += f"Image: {image.shape[1]}x{image.shape[0]}\n\n"
-    stats_text += f"Detections: {len(detections)}\n\n"
+    stats_text += f"Image Size:\n"
+    stats_text += f"{image.shape[1]} x {image.shape[0]} pixels\n\n"
+    stats_text += f"Total Detections: {len(detections)}\n\n"
     
-    for i, det in enumerate(detections[:5], 1):  # Show top 5
-        stats_text += f"{i}. {det['class_name']}\n"
-        stats_text += f"   {det['confidence']:.1%}\n"
+    stats_text += "DETECTED OBJECTS:\n"
+    stats_text += "-" * 40 + "\n"
     
-    if len(detections) > 5:
-        stats_text += f"\n... and {len(detections)-5} more\n"
+    for i, det in enumerate(detections[:8], 1):  # Show up to 8
+        stats_text += f"{i}. {det['class_name'].upper()}\n"
+        stats_text += f"   Confidence: {det['confidence']:.1%}\n"
+        if det['mask'] is not None:
+            stats_text += f"   Status: Edge-Following ✓\n\n"
+        else:
+            stats_text += f"   Status: Box Only\n\n"
     
-    stats_text += "\n" + "=" * 35
+    if len(detections) > 8:
+        stats_text += f"... and {len(detections)-8} more\n"
     
-    plt.text(0.1, 0.5, stats_text, fontsize=10, family='monospace',
-             verticalalignment='center', bbox=dict(boxstyle='round',
-             facecolor='lightblue', alpha=0.8))
+    stats_text += "=" * 40
+    
+    plt.text(0.05, 0.5, stats_text, fontsize=13, family='monospace',
+             verticalalignment='center', fontweight='bold',
+             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.9, pad=1))
     
     plt.tight_layout()
-    plt.savefig("8_results_grid.png", dpi=150, bbox_inches='tight')
-    print("   ✓ 8_results_grid.png (complete visualization)")
+    plt.savefig("6_results_grid.png", dpi=150, bbox_inches='tight')
+    print("   ✓ 6_results_grid.png (complete visualization)")
     
     print("\n" + "="*70)
     print("✅ Detection Complete!")
@@ -383,18 +398,10 @@ def main():
     # Print tips
     print("\n💡 Tips:")
     print("   • Lower CONFIDENCE_THRESHOLD (e.g., 0.15) to detect more objects")
-    print("   • Use MODEL_SIZE='yolov8x' for best accuracy (slower)")
-    print("   • Use MODEL_SIZE='yolov8n' for fastest speed (less accurate)")
-    print("   • YOLOv8 is trained on COCO dataset (80 classes)")
-    print("   • For marine animals, results may vary as COCO has limited classes")
-    
-    print("\n📦 Model sizes:")
-    print("   yolov8n: ~6MB   (fastest, least accurate)")
-    print("   yolov8s: ~22MB")
-    print("   yolov8m: ~52MB")
-    print("   yolov8l: ~87MB")
-    print("   yolov8x: ~138MB (slowest, most accurate)")
-    
+    print("   • Segmentation models (-seg) follow exact edges, not boxes!")
+    print("   • Use MODEL_SIZE='yolov8x-seg' for best accuracy (slower)")
+    print("   • Use MODEL_SIZE='yolov8n-seg' for fastest speed (less accurate)")
+        
     if has_gpu:
         print(f"\n🚀 GPU acceleration: ENABLED")
     else:
