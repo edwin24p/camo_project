@@ -3,3 +3,5 @@ matplotlib
 numpy
 kaggle
 torchvision
+opencv-python
+ultralytics
