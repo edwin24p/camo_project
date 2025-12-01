@@ -1,7 +1,16 @@
+"""
+GPU-Accelerated Animal Detection with YOLOv8-Segmentation + Custom Classifier
+1. YOLOv8 detects and segments the animal
+2. Your custom classifier identifies the specific animal type
+"""
+
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import urllib.request
+import torch
+from torchvision import transforms
+from PIL import Image
 from pathlib import Path
 
 # <-- Choose your input method -->
@@ -21,10 +30,81 @@ IOU_THRESHOLD = 0.45  # Overlap threshold for removing duplicate detections
 # IMPORTANT: Use segmentation model with '-seg' suffix!
 MODEL_SIZE = 'yolov8x-seg'  # Options: yolov8n-seg, yolov8s-seg, yolov8m-seg, yolov8l-seg, yolov8x-seg
 
+# Custom classifier settings
+USE_CUSTOM_CLASSIFIER = True  # Set to True to use your trained classifier
+CLASSIFIER_PATH = "classifier.pt"  # Path to your trained model
+CLASS_NAMES = [
+    "antelope", "badger", "bat", "bear", "bee", "beetle", "bison", "boar", 
+    "butterfly", "cat", "caterpillar", "chimpanzee", "cockroach", "cow", 
+    "coyote", "crab", "crow", "deer", "dog", "dolphin", "donkey", "dragonfly", 
+    "duck", "eagle", "elephant", "flamingo", "fly", "fox", "goat", "goldfish", 
+    "goose", "gorilla", "grasshopper", "hamster", "hare", "hedgehog", 
+    "hippopotamus", "hornbill", "horse", "hummingbird", "hyena", "jellyfish", 
+    "kangaroo", "koala", "ladybugs", "leopard", "lion", "lizard", "lobster", 
+    "mosquito", "moth", "mouse", "octopus", "okapi", "orangutan", "otter", 
+    "owl", "ox", "oyster", "panda", "parrot", "pelecaniformes", "penguin", 
+    "pig", "pigeon", "porcupine", "possum", "raccoon", "rat", "reindeer", 
+    "rhinoceros", "sandpiper", "seahorse", "seal", "shark", "sheep", "snake", 
+    "sparrow", "squid", "squirrel", "starfish", "swan", "tiger", "turkey", 
+    "turtle", "whale", "wolf", "wombat", "woodpecker", "zebra"
+]
+
+def load_custom_classifier(model_path):
+    """Load your trained classifier"""
+    try:
+        print(f"\n🧠 Loading custom classifier from {model_path}...")
+        classifier = torch.load(model_path)
+        classifier.eval()
+        
+        # Move to GPU if available
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        classifier = classifier.to(device)
+        
+        print(f"   ✓ Custom classifier loaded on {device.upper()}")
+        return classifier, device
+    except Exception as e:
+        print(f"   ⚠ Error loading custom classifier: {e}")
+        return None, None
+
+# Preprocessing for your classifier
+def get_classifier_transform():
+    """Get the preprocessing transform for your classifier"""
+    return transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                           std=[0.229, 0.224, 0.225])
+    ])
+
+def classify_segmented_animal(segmented_image, classifier, transform, class_names, device):
+    """Classify the segmented animal using your custom classifier"""
+    try:
+        # Convert BGR to RGB
+        rgb_image = cv2.cvtColor(segmented_image, cv2.COLOR_BGR2RGB)
+        
+        # Convert to PIL Image
+        pil_image = Image.fromarray(rgb_image)
+        
+        # Apply transform
+        input_tensor = transform(pil_image).unsqueeze(0).to(device)
+        
+        # Run classifier
+        with torch.no_grad():
+            preds = classifier(input_tensor)
+            predicted_class_idx = preds.argmax(dim=1).item()
+            confidence = torch.softmax(preds, dim=1)[0][predicted_class_idx].item()
+        
+        predicted_label = class_names[predicted_class_idx]
+        
+        return predicted_label, confidence
+        
+    except Exception as e:
+        print(f"   ⚠ Classification error: {e}")
+        return "unknown", 0.0
+
 def check_gpu_availability():
     """Check if GPU is available for PyTorch"""
     try:
-        import torch
         if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
@@ -73,7 +153,7 @@ def load_yolo_model(model_size='yolov8n-seg', use_gpu=True):
         print("   (First run will download the model - ~7MB to 140MB depending on size)")
         
         # Load model
-        model = YOLO(f'{model_size}.pt')
+        yolo_model = YOLO(f'{model_size}.pt')
         
         # Set device
         if use_gpu:
@@ -82,10 +162,10 @@ def load_yolo_model(model_size='yolov8n-seg', use_gpu=True):
             device = 'cpu'
             print("   Using CPU as requested")
         
-        model.to(device)
+        yolo_model.to(device)
         print(f"✓ Segmentation model loaded on {device.upper()}")
         
-        return model, device
+        return yolo_model, device
         
     except ImportError:
         print("\n❌ Ultralytics YOLOv8 not installed!")
@@ -102,7 +182,7 @@ def detect_animals(image, model, confidence_threshold=0.25, iou_threshold=0.45):
     """Detect animals in image using YOLO with segmentation masks"""
     
     # Run inference with segmentation
-    print("\n🔍 Running detection with segmentation...")
+    print("\n🔍 Running YOLO detection with segmentation...")
     results = model(image, conf=confidence_threshold, iou=iou_threshold, verbose=False)
     
     # Get the first result (single image)
@@ -139,7 +219,9 @@ def detect_animals(image, model, confidence_threshold=0.25, iou_threshold=0.45):
             'class_name': class_name,
             'confidence': confidence,
             'box': box,
-            'mask': mask
+            'mask': mask,
+            'custom_label': None,  # Will be filled by custom classifier
+            'custom_confidence': None
         })
     
     return detections, result
@@ -166,8 +248,23 @@ def create_segmentation_mask(image, detections):
     
     return mask
 
-def draw_detections(image, detections):
-    """Draw segmentation contours and labels on image - NO BOXES!"""
+def extract_individual_segmented(image, detection):
+    """Extract individual segmented animal from detection"""
+    if detection['mask'] is not None:
+        # Resize mask to image dimensions
+        det_mask = cv2.resize(detection['mask'], (image.shape[1], image.shape[0]))
+        binary_mask = (det_mask > 0.5).astype(np.uint8)
+        
+        # Apply mask to image
+        segmented = cv2.bitwise_and(image, image, mask=binary_mask)
+        return segmented
+    else:
+        # Fallback to bounding box crop
+        x1, y1, x2, y2 = detection['box'].astype(int)
+        return image[y1:y2, x1:x2]
+
+def draw_detections(image, detections, use_custom_labels=False):
+    """Draw segmentation contours and labels on image"""
     annotated = image.copy()
     
     # Generate colors for different classes
@@ -175,8 +272,13 @@ def draw_detections(image, detections):
     colors = {}
     
     for det in detections:
-        class_name = det['class_name']
-        confidence = det['confidence']
+        # Choose which label to use
+        if use_custom_labels and det['custom_label'] is not None:
+            class_name = det['custom_label']
+            confidence = det['custom_confidence']
+        else:
+            class_name = det['class_name']
+            confidence = det['confidence']
         
         # Get or create color for this class
         if class_name not in colors:
@@ -201,7 +303,7 @@ def draw_detections(image, detections):
             annotated = cv2.addWeighted(annotated, 0.8, overlay, 0.2, 0)
             
         else:
-            # Fallback to bounding box if no mask (shouldn't happen with -seg model)
+            # Fallback to bounding box if no mask
             print(f"   ⚠ Warning: No mask for {class_name}, using box")
             x1, y1, x2, y2 = det['box'].astype(int)
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
@@ -231,11 +333,11 @@ def create_outlined_version(image, mask):
     cv2.drawContours(outlined, contours, -1, (0, 255, 0), 4)
     return outlined
 
-def create_visualizations(image, detections):
+def create_visualizations(image, detections, use_custom_labels=False):
     """Create all visualization outputs"""
     
     # Annotated image with segmentation contours
-    annotated = draw_detections(image, detections)
+    annotated = draw_detections(image, detections, use_custom_labels)
     
     # Segmentation mask
     mask = create_segmentation_mask(image, detections)
@@ -254,7 +356,7 @@ def create_visualizations(image, detections):
 
 def main():
     print("="*70)
-    print("🤖 GPU-Accelerated Animal Detection with Edge Segmentation")
+    print("🤖 YOLO Detection + Custom Animal Classifier")
     print("="*70)
     
     # Check GPU
@@ -263,13 +365,23 @@ def main():
     if not has_gpu and USE_GPU:
         print("   Continuing with CPU...")
     
-    # Load model
-    print("\n2. Loading AI model...")
-    model, device = load_yolo_model(MODEL_SIZE, USE_GPU)
+    # Load YOLO model
+    print("\n2. Loading YOLO segmentation model...")
+    yolo_model, yolo_device = load_yolo_model(MODEL_SIZE, USE_GPU)
     
-    if model is None:
-        print("\n❌ Failed to load model. Please install required packages.")
+    if yolo_model is None:
+        print("\n❌ Failed to load YOLO model. Please install required packages.")
         return
+    
+    # Load custom classifier
+    classifier = None
+    classifier_device = None
+    classifier_transform = None
+    
+    if USE_CUSTOM_CLASSIFIER:
+        classifier, classifier_device = load_custom_classifier(CLASSIFIER_PATH)
+        if classifier is not None:
+            classifier_transform = get_classifier_transform()
     
     # Load image
     print("\n3. Loading image...")
@@ -286,10 +398,10 @@ def main():
     
     print(f"   ✓ Image loaded: {image.shape[1]}x{image.shape[0]} pixels")
     
-    # Detect animals
-    detections, result = detect_animals(image, model, CONFIDENCE_THRESHOLD, IOU_THRESHOLD)
+    # Detect animals with YOLO
+    detections, result = detect_animals(image, yolo_model, CONFIDENCE_THRESHOLD, IOU_THRESHOLD)
     
-    print(f"\n✓ Detection complete!")
+    print(f"\n✓ YOLO detection complete!")
     print(f"   Found {len(detections)} object(s)")
     
     if len(detections) == 0:
@@ -297,24 +409,46 @@ def main():
         print(f"   Try lowering CONFIDENCE_THRESHOLD (current: {CONFIDENCE_THRESHOLD})")
         return
     
-    # Print detections
-    print("\n📋 Detected objects:")
-    for i, det in enumerate(detections, 1):
-        mask_status = "with segmentation" if det['mask'] is not None else "box only"
-        print(f"   {i}. {det['class_name']}: {det['confidence']:.1%} confidence ({mask_status})")
+    # Classify each detection with custom classifier
+    if classifier is not None:
+        print("\n4. Classifying detected animals with custom classifier...")
+        for i, det in enumerate(detections, 1):
+            # Extract individual segmented animal
+            segmented_animal = extract_individual_segmented(image, det)
+            
+            # Classify
+            custom_label, custom_conf = classify_segmented_animal(
+                segmented_animal, classifier, classifier_transform, 
+                CLASS_NAMES, classifier_device
+            )
+            
+            # Store custom classification
+            det['custom_label'] = custom_label
+            det['custom_confidence'] = custom_conf
+            
+            print(f"   {i}. YOLO: {det['class_name']} → Custom: {custom_label} ({custom_conf:.1%})")
     
-    # Create visualizations
-    print("\n4. Creating visualizations...")
-    annotated, outlined, overlay, segmented = create_visualizations(image, detections)
+    # Print final detections
+    print("\n📋 Final detected objects:")
+    for i, det in enumerate(detections, 1):
+        if det['custom_label'] is not None:
+            print(f"   {i}. {det['custom_label']}: {det['custom_confidence']:.1%} confidence")
+        else:
+            print(f"   {i}. {det['class_name']}: {det['confidence']:.1%} confidence")
+    
+    # Create visualizations (use custom labels if available)
+    print("\n5. Creating visualizations...")
+    use_custom = classifier is not None
+    annotated, outlined, overlay, segmented = create_visualizations(image, detections, use_custom)
     
     # Save outputs
-    print("\n5. Saving outputs...")
+    print("\n6. Saving outputs...")
     
     cv2.imwrite("1_original.png", image)
     print("   ✓ 1_original.png")
     
     cv2.imwrite("2_detected.png", annotated)
-    print("   ✓ 2_detected.png (segmentation contours following edges)")
+    print("   ✓ 2_detected.png (with custom labels)" if use_custom else "   ✓ 2_detected.png")
     
     cv2.imwrite("3_outlined.png", outlined)
     print("   ✓ 3_outlined.png (green outline)")
@@ -335,7 +469,8 @@ def main():
     
     plt.subplot(2, 3, 2)
     plt.imshow(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
-    plt.title("2. AI Segmentation (Edge-Following)", fontsize=16, fontweight='bold')
+    title = "2. Custom Classification" if use_custom else "2. YOLO Detection"
+    plt.title(title, fontsize=16, fontweight='bold')
     plt.axis('off')
     
     plt.subplot(2, 3, 3)
@@ -357,26 +492,26 @@ def main():
     plt.subplot(2, 3, 6)
     plt.axis('off')
     
-    model_name = MODEL_SIZE.replace('-seg', '').upper()
-    
     stats_text = "DETECTION STATISTICS\n"
     stats_text += "=" * 40 + "\n\n"
-    stats_text += f"Model: YOLOv8-{model_name[-1]}-SEG\n"
-    stats_text += f"Device: {device.upper()}\n\n"
     stats_text += f"Image Size:\n"
     stats_text += f"{image.shape[1]} x {image.shape[0]} pixels\n\n"
     stats_text += f"Total Detections: {len(detections)}\n\n"
     
-    stats_text += "DETECTED OBJECTS:\n"
+    if use_custom:
+        stats_text += "CUSTOM CLASSIFICATIONS:\n"
+    else:
+        stats_text += "YOLO DETECTIONS:\n"
     stats_text += "-" * 40 + "\n"
     
-    for i, det in enumerate(detections[:8], 1):  # Show up to 8
-        stats_text += f"{i}. {det['class_name'].upper()}\n"
-        stats_text += f"   Confidence: {det['confidence']:.1%}\n"
-        if det['mask'] is not None:
-            stats_text += f"   Status: Edge-Following ✓\n\n"
+    for i, det in enumerate(detections[:8], 1):
+        if use_custom and det['custom_label'] is not None:
+            stats_text += f"{i}. {det['custom_label'].upper()}\n"
+            stats_text += f"   Confidence: {det['custom_confidence']:.1%}\n"
+            stats_text += f"   (YOLO: {det['class_name']})\n\n"
         else:
-            stats_text += f"   Status: Box Only\n\n"
+            stats_text += f"{i}. {det['class_name'].upper()}\n"
+            stats_text += f"   Confidence: {det['confidence']:.1%}\n\n"
     
     if len(detections) > 8:
         stats_text += f"... and {len(detections)-8} more\n"
@@ -385,23 +520,23 @@ def main():
     
     plt.text(0.05, 0.5, stats_text, fontsize=13, family='monospace',
              verticalalignment='center', fontweight='bold',
-             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.9, pad=1))
+             bbox=dict(boxstyle='round', facecolor='lightgreen' if use_custom else 'lightblue', 
+                      alpha=0.9, pad=1))
     
     plt.tight_layout()
     plt.savefig("6_results_grid.png", dpi=150, bbox_inches='tight')
     print("   ✓ 6_results_grid.png (complete visualization)")
     
     print("\n" + "="*70)
-    print("✅ Detection Complete!")
+    print("✅ Detection & Classification Complete!")
     print("="*70)
     
-    # Print tips
-    print("\n💡 Tips:")
-    print("   • Lower CONFIDENCE_THRESHOLD (e.g., 0.15) to detect more objects")
-    print("   • Segmentation models (-seg) follow exact edges, not boxes!")
-    print("   • Use MODEL_SIZE='yolov8x-seg' for best accuracy (slower)")
-    print("   • Use MODEL_SIZE='yolov8n-seg' for fastest speed (less accurate)")
-        
+    if use_custom:
+        print("\n🎯 Pipeline:")
+        print("   1. YOLOv8-seg detected and segmented animals")
+        print("   2. Your custom classifier identified specific types")
+        print("   3. Results saved with custom labels")
+    
     if has_gpu:
         print(f"\n🚀 GPU acceleration: ENABLED")
     else:
