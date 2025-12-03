@@ -10,7 +10,7 @@ from pathlib import Path
 
 # image_url = "https://www.animalfunfacts.net/images/stories/photos/invertebrates/coleoidea/octopus/mimic_octopus_l.jpg"
 
-# Option 2: Use a local file path (uncomment to use)
+
 image_path = "/home/maudie/eecs442_final/imgs/Screenshot 2025-12-03 140658.png"
 
 # Configuration
