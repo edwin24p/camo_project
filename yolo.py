@@ -45,7 +45,7 @@ CLASS_NAMES = [
 ]
 
 def load_custom_classifier(model_path):
-    """Load trained classifier"""
+    #Load trained classifier
     try:
         print(f"\nLoading custom classifier from {model_path}...")
         classifier = torch.load(model_path)
