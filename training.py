@@ -5,7 +5,7 @@ from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
 import os
 
-DATA_DIR = "animals"   # your dataset folder
+DATA_DIR = "animals"  
 BATCH = 16
 EPOCHS = 10
 LR = 0.0005
