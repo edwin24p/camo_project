@@ -10,7 +10,7 @@ BATCH = 16
 EPOCHS = 10
 LR = 0.0005
 
-# 1. Image transforms
+# Image transforms
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
@@ -18,12 +18,12 @@ transform = transforms.Compose([
                          [0.229, 0.224, 0.225])
 ])
 
-# 2. Load dataset automatically by folder names
+# Load dataset automatically by folder names
 dataset = datasets.ImageFolder(DATA_DIR, transform=transform)
 class_names = dataset.classes
 print("Classes:", class_names)
 
-# 3. Split train/test
+# Split train/test
 train_size = int(0.8 * len(dataset))
 test_size = len(dataset) - train_size
 train_ds, test_ds = torch.utils.data.random_split(dataset, [train_size, test_size])
@@ -31,7 +31,7 @@ train_ds, test_ds = torch.utils.data.random_split(dataset, [train_size, test_siz
 train_loader = DataLoader(train_ds, batch_size=BATCH, shuffle=True)
 test_loader = DataLoader(test_ds, batch_size=BATCH)
 
-# 4. Load a pretrained model (EfficientNet-B0)
+# Load a pretrained model (EfficientNet-B0)
 model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
 model.classifier[1] = nn.Linear(model.classifier[1].in_features, len(class_names))
 
@@ -42,7 +42,7 @@ model = model.to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=LR)
 
-# 5. Training loop
+# Training loop
 for epoch in range(EPOCHS):
     model.train()
     total_loss = 0
@@ -60,7 +60,7 @@ for epoch in range(EPOCHS):
 
     print(f"Epoch {epoch+1}/{EPOCHS} - Loss: {total_loss:.4f}")
 
-# 6. Test accuracy
+# Test accuracy
 model.eval()
 correct = 0
 total = 0
@@ -75,6 +75,6 @@ with torch.no_grad():
 
 print(f"Accuracy: {100 * correct / total:.2f}%")
 
-# 7. Save model
+# Save model
 torch.save(model.state_dict(), "animal_classifier.pt")
 print("\nModel saved as animal_classifier.pt")
