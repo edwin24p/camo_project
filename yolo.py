@@ -6,29 +6,28 @@ import torch
 from torchvision import transforms
 from PIL import Image
 from pathlib import Path
-# /////////////// Only need to change lines 12 - 29 than run the code! ////////////////////
-# <-- Choose your input method -->
-# Option 1: Google url
+
+
 # image_url = "https://www.animalfunfacts.net/images/stories/photos/invertebrates/coleoidea/octopus/mimic_octopus_l.jpg"
 
 # Option 2: Use a local file path (uncomment to use)
 image_path = "/home/maudie/eecs442_final/imgs/Screenshot 2025-12-03 140658.png"
 
 # Configuration
-USE_URL = False  # Set to False to use local file path
-USE_GPU = True  # Set to False to use CPU instead
+USE_URL = False 
+USE_GPU = True  
 
 # Detection settings
 CONFIDENCE_THRESHOLD = 0.02  # Minimum confidence to show detection (0.0-1.0)
 IOU_THRESHOLD = 0.45  # Overlap threshold for removing duplicate detections
 
-# Model used to find anaimals pick any of the following option yolov8x-seg give the best resalts
-MODEL_SIZE = 'yolov8x-seg'  # Options: yolov8n-seg, yolov8s-seg, yolov8m-seg, yolov8l-seg, yolov8x-seg
+
+MODEL_SIZE = 'yolov8x-seg'  
 
 # Custom classifier settings
-USE_CUSTOM_CLASSIFIER = True  # Set to True to use your trained classifier or false for yolo classifier
-# ///// Nothing to be changed after this point //////////////////
-CLASSIFIER_PATH = "classifier.pt"  # Path to your trained model
+USE_CUSTOM_CLASSIFIER = True  
+
+CLASSIFIER_PATH = "animal_classifier.pt"  
 CLASS_NAMES = [
     "antelope", "badger", "bat", "bear", "bee", "beetle", "bison", "boar", 
     "butterfly", "cat", "caterpillar", "chimpanzee", "cockroach", "cow", 
@@ -46,7 +45,7 @@ CLASS_NAMES = [
 ]
 
 def load_custom_classifier(model_path):
-    """Load your trained classifier"""
+    """Load trained classifier"""
     try:
         print(f"\nLoading custom classifier from {model_path}...")
         classifier = torch.load(model_path)
@@ -62,9 +61,9 @@ def load_custom_classifier(model_path):
         print(f"   Error loading custom classifier: {e}")
         return None, None
 
-# Preprocessing for your classifier
+# Preprocessing classifier
 def get_classifier_transform():
-    # Get the preprocessing transform for your classifier
+    # Get the preprocessing transform for classifier
     return transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -73,7 +72,7 @@ def get_classifier_transform():
     ])
 
 def classify_segmented_animal(segmented_image, classifier, transform, class_names, device):
-    # Classify the segmented animal using your custom classifier
+    # Classify the segmented animal using custom classifier
     try:
         # Convert BGR to RGB
         rgb_image = cv2.cvtColor(segmented_image, cv2.COLOR_BGR2RGB)
@@ -165,10 +164,6 @@ def load_yolo_model(model_size='yolov8n-seg', use_gpu=True):
         
     except ImportError:
         print("\n Ultralytics YOLOv8 not installed!")
-        print("\nInstall with:")
-        print("  pip install ultralytics")
-        print("\nFor GPU support, also install:")
-        print("  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118")
         return None, None
     except Exception as e:
         print(f"Error loading model: {e}")
@@ -193,9 +188,9 @@ def detect_animals(image, model, confidence_threshold=0.25, iou_threshold=0.45):
     masks = None
     if hasattr(result, 'masks') and result.masks is not None:
         masks = result.masks.data.cpu().numpy()
-        print(f"   Segmentation masks detected for {len(masks)} objects")
+        print(f"Segmentation masks detected ")
     else:
-        print("   No segmentation masks available - model may not be a segmentation model")
+        print("No segmentation masks available")
     
     # Get class names
     class_names = result.names
@@ -293,14 +288,14 @@ def draw_detections(image, detections, use_custom_labels=False):
             # Draw thick contour following the animal's edges
             cv2.drawContours(annotated, contours, -1, color, 4)
             
-            # Optional: fill with semi-transparent color
+            # fill with semi-transparent color
             overlay = annotated.copy()
             cv2.drawContours(overlay, contours, -1, color, -1)
             annotated = cv2.addWeighted(annotated, 0.8, overlay, 0.2, 0)
             
         else:
             # Fallback to bounding box if no mask
-            print(f"   Warning: No mask for {class_name}, using box")
+            print(f"No mask for {class_name}, using box")
             x1, y1, x2, y2 = det['box'].astype(int)
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
         
@@ -351,18 +346,15 @@ def create_visualizations(image, detections, use_custom_labels=False):
     return annotated, outlined, overlay, segmented
 
 def main():
-    print("="*70)
+ 
     print("YOLO Detection + Custom Animal Classifier")
-    print("="*70)
     
     # Check GPU
-    print("\n1. Checking hardware...")
     has_gpu = check_gpu_availability()
     if not has_gpu and USE_GPU:
         print("   Continuing with CPU...")
     
     # Load YOLO model
-    print("\n2. Loading YOLO segmentation model...")
     yolo_model, yolo_device = load_yolo_model(MODEL_SIZE, USE_GPU)
     
     if yolo_model is None:
@@ -392,22 +384,21 @@ def main():
         print("Failed to load image")
         return
     
-    print(f"   Image loaded: {image.shape[1]}x{image.shape[0]} pixels")
+    print(f"Image loaded: {image.shape[1]}x{image.shape[0]} pixels")
     
     # Detect animals with YOLO
     detections, result = detect_animals(image, yolo_model, CONFIDENCE_THRESHOLD, IOU_THRESHOLD)
     
-    print(f"\nYOLO detection complete!")
+ 
     print(f"   Found {len(detections)} object(s)")
     
     if len(detections) == 0:
         print("\nNo objects detected with current confidence threshold.")
-        print(f"   Try lowering CONFIDENCE_THRESHOLD (current: {CONFIDENCE_THRESHOLD})")
         return
     
     # Classify each detection with custom classifier
     if classifier is not None:
-        print("\n4. Classifying detected animals with custom classifier...")
+        print("\nClassifying detected animals with custom classifier...")
         for i, det in enumerate(detections, 1):
             # Extract individual segmented animal
             segmented_animal = extract_individual_segmented(image, det)
@@ -422,7 +413,7 @@ def main():
             det['custom_label'] = custom_label
             det['custom_confidence'] = custom_conf
             
-            print(f"   {i}. YOLO: {det['class_name']} → Custom: {custom_label} ({custom_conf:.1%})")
+            print(f"{i}. YOLO: {det['class_name']} Custom: {custom_label} ({custom_conf:.1%})")
     
     # Print final detections
     print("\nFinal detected objects:")
@@ -433,12 +424,12 @@ def main():
             print(f"   {i}. {det['class_name']}: {det['confidence']:.1%} confidence")
     
     # Create visualizations (use custom labels if available)
-    print("\n5. Creating visualizations...")
+    print("\nCreating visualizations...")
     use_custom = classifier is not None
     annotated, outlined, overlay, segmented = create_visualizations(image, detections, use_custom)
     
     # Save outputs
-    print("\n6. Saving outputs...")
+    print("\nSaving outputs...")
     
     cv2.imwrite("1_original.png", image)
     print("   1_original.png")
@@ -523,22 +514,11 @@ def main():
     plt.savefig("6_results_grid.png", dpi=150, bbox_inches='tight')
     print("   6_results_grid.png (complete visualization)")
     
-    print("\n" + "="*70)
+
     print("Detection & Classification Complete!")
-    print("="*70)
+ 
     
-    if use_custom:
-        print("\nPipeline:")
-        print("   1. YOLOv8-seg detected and segmented animals")
-        print("   2. Your custom classifier identified specific types")
-        print("   3. Results saved with custom labels")
-    
-    if has_gpu:
-        print(f"\nGPU acceleration: ENABLED")
-    else:
-        print(f"\nGPU acceleration: DISABLED (using CPU)")
-    
-    print("\n" + "="*70)
+ 
 
 if __name__ == "__main__":
     main()
