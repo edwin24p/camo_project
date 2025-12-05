@@ -11,12 +11,12 @@ from pathlib import Path
 
 # Pick if you want to use a url or a local picture, then run the code
 # Don't have to change any other settings past line 32
-USE_URL = True
+USE_URL = False
 
 if USE_URL:
     image_source = "https://github.com/edwin24p/camo_project/blob/main/CAMO-V.1.0-CVIU2019/Images/Test/camourflage_00129.jpg?raw=true"
 else:
-    image_source = "Path/snake.jpg"
+    image_source = "CAMO-V.1.0-CVIU2019/Images/Test/camourflage_00087.jpg"
 USE_GPU = True
 
 # Configuration
@@ -385,10 +385,10 @@ def main():
     print("\n3. Loading image...")
     if USE_URL:
         print("   Source: URL")
-        image = url_to_image(image_url)
+        image = url_to_image(image_source)
     else:
         print("   Source: Local file")
-        image = load_image_from_path(image_path)
+        image = load_image_from_path(image_source)
     
     if image is None:
         print("Failed to load image")
