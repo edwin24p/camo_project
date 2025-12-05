@@ -3,6 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import urllib.request
 import torch
+import torch.nn as nn
+from torchvision import models
 from torchvision import transforms
 from PIL import Image
 from pathlib import Path
@@ -48,8 +50,13 @@ def load_custom_classifier(model_path):
     #Load trained classifier
     try:
         print(f"\nLoading custom classifier from {model_path}...")
-        classifier = torch.load(model_path)
+        classifier = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
+        classifier.classifier[1] = nn.Linear(classifier.classifier[1].in_features, len(CLASS_NAMES))
+
+        # Load weights
+        classifier.load_state_dict(torch.load(model_path, map_location="cuda"))
         classifier.eval()
+      
         
         # Move to GPU if available
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
