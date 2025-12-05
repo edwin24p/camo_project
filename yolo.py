@@ -9,15 +9,18 @@ from torchvision import transforms
 from PIL import Image
 from pathlib import Path
 
+# Pick if you want to use a url or a local picture, then run the code
+# Don't have to change any other settings past line 32
+USE_URL = True
 
-# image_url = "https://www.animalfunfacts.net/images/stories/photos/invertebrates/coleoidea/octopus/mimic_octopus_l.jpg"
-
-
-image_path = "/home/maudie/eecs442_final/imgs/Screenshot 2025-12-03 140658.png"
+if USE_URL:
+    image_source = "https://github.com/edwin24p/camo_project/blob/main/CAMO-V.1.0-CVIU2019/Images/Test/camourflage_00129.jpg?raw=true"
+else:
+    image_source = "Path/snake.jpg"
+USE_GPU = True
 
 # Configuration
-USE_URL = False 
-USE_GPU = True  
+USE_URL = False
 
 # Detection settings
 CONFIDENCE_THRESHOLD = 0.02  # Minimum confidence to show detection (0.0-1.0)
